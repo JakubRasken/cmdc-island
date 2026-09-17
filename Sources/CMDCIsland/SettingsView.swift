@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// Settings. Deliberately short: everything here changes what the island shows

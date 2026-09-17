@@ -90,7 +90,7 @@ enum HookInstaller {
 
         // 1. Write the script.
         do {
-            try CommandCodePaths.ensureIslandDirectory()
+            CommandCodePaths.ensureIslandDirectory()
             try HookScript.source.write(to: scriptURL, atomically: true, encoding: .utf8)
             try? FileManager.default.setAttributes(
                 [.posixPermissions: 0o755], ofItemAtPath: scriptURL.path
@@ -142,27 +142,29 @@ enum HookInstaller {
 
     @discardableResult
     static func uninstall() -> State {
-        if case .failure(let error) = readSettings() {
-            return .failed(error)
+        let result = readSettings()
+        guard case .success(var settings) = result else {
+            if case .failure(let error) = result { return .failed(error) }
+            return .notInstalled
         }
-
-        guard case .success(var settings) = readSettings() else { return .notInstalled }
 
         guard var hooks = settings["hooks"] as? [String: Any] else {
             try? removeScript()
             return .notInstalled
         }
 
-        // Drop definitions whose entries reference our script.
+        // Drop only entries that point at our own script. Matching on the
+        // island directory rather than the bare file name means another tool's
+        // `hook.mjs` is never touched.
+        let ourDirectory = CommandCodePaths.islandURL.path
+
         for (event, value) in hooks {
             guard var definitions = value as? [[String: Any]] else { continue }
 
             definitions = definitions.compactMap { definition in
                 guard var entries = definition["hooks"] as? [[String: Any]] else { return definition }
                 entries.removeAll { entry in
-                    guard let entryCommand = entry["command"] as? String else { return false }
-                    return entryCommand.contains(HookScript.fileName)
-                        || entryCommand.contains(CommandCodePaths.islandURL.path)
+                    (entry["command"] as? String)?.contains(ourDirectory) ?? false
                 }
                 if entries.isEmpty { return nil }          // definition now empty
                 var updated = definition
@@ -229,7 +231,7 @@ enum HookInstaller {
             withJSONObject: settings,
             options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         )
-        try CommandCodePaths.ensureIslandDirectory()
+        CommandCodePaths.ensureIslandDirectory()
         try data.write(to: CommandCodePaths.settingsURL, options: .atomic)
     }
 

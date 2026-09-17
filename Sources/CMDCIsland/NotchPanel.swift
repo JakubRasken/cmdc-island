@@ -34,6 +34,11 @@ extension NSScreen {
     }
 }
 
+/// Starting footprint, replaced by the measured island size on first layout.
+/// A free constant rather than a property, because `super.init` needs it
+/// before `self` is usable.
+private let initialPanelSize = CGSize(width: 120, height: 30)
+
 /// Borderless, non-activating panel pinned to the top-centre of the chosen
 /// screen.
 ///
@@ -45,13 +50,13 @@ extension NSScreen {
 final class NotchPanel: NSPanel {
 
     private let monitor: CommandCodeMonitor
-    private var currentSize = CGSize(width: 120, height: 30)
+    private var currentSize = initialPanelSize
     private var fullscreenTimer: Timer?
 
     init(monitor: CommandCodeMonitor) {
         self.monitor = monitor
         super.init(
-            contentRect: NSRect(origin: .zero, size: currentSize),
+            contentRect: NSRect(origin: .zero, size: initialPanelSize),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false

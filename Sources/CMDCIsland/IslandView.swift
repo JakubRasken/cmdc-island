@@ -224,8 +224,8 @@ private struct ExpandedContent: View {
                     .frame(height: 1)
                     .padding(.vertical, 8)
 
-                if sessions.count == 1, let session = sessions[0] {
-                    singleSession(session)
+                if sessions.count == 1 {
+                    singleSession(sessions[0])
                 } else {
                     sessionList
                 }
