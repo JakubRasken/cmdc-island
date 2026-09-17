@@ -16,7 +16,7 @@ final class SettingsWindowController {
 
     func show() {
         if let window {
-            NSApp.activate(ignoringOtherApps: true)
+            NSApp.activate()
             window.makeKeyAndOrderFront(nil)
             return
         }
@@ -32,7 +32,7 @@ final class SettingsWindowController {
         window.setFrameAutosaveName("CMDCIslandSettings")
 
         self.window = window
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         window.makeKeyAndOrderFront(nil)
     }
 }

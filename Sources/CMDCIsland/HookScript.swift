@@ -78,12 +78,43 @@ function baseName(value) {
   return parts[parts.length - 1] || value;
 }
 
-// Resolve the pid + tty of the process that owns this hook, by walking the
-// parent chain until a process with a controlling terminal turns up. The
-// terminal is what the island focuses when you click it.
+// Resolve the pid + tty of the process that owns this hook. The tty is what
+// the island focuses when you click; the pid is what it uses to decide whether
+// a session is still alive.
+//
+// The walk is upward, and *which* ancestor we stop at matters. A process
+// inherits its controlling terminal across fork/exec, so the shell that runs
+// this hook already reports the right tty — and it exits the moment the hook
+// finishes. Returning it would cache a pid that is dead by the next poll, so
+// liveness would always answer false.
+//
+// Preference order:
+//   1. the nearest ancestor running node — that is Command Code itself, the
+//      one process that is alive for exactly as long as the session is;
+//   2. otherwise the topmost ancestor with a tty, which is the user's login
+//      shell (stable, and survives Command Code restarting inside it);
+//   3. otherwise nothing, and focusing falls back to the process table.
 //
 // Cached per session: a tty never changes mid-session, and this costs one
 // `ps` spawn.
+function normaliseTTY(value) {
+  if (!value || value === '??' || value === '?' || value === '-') return null;
+  // BSD ps reports `ttys003`; some builds report the device path.
+  return value.replace(/^\/dev\//, '');
+}
+
+function isNodeProcess(comm) {
+  const base = comm.split('/').pop() || comm;
+  return base === 'node' || base === 'node.exe';
+}
+
+function rememberOwner(cacheFile, pid, tty) {
+  try {
+    mkdirSync(PROCS, { recursive: true });
+    writeFileSync(cacheFile, pid + ' ' + tty);
+  } catch { /* the cache is an optimisation only */ }
+}
+
 function resolveOwner(sessionId) {
   const cacheFile = join(PROCS, sessionId);
   try {
@@ -95,7 +126,7 @@ function resolveOwner(sessionId) {
 
   let table = '';
   try {
-    table = execFileSync('/bin/ps', ['-axo', 'pid=,ppid=,tty='], {
+    table = execFileSync('/bin/ps', ['-axo', 'pid=,ppid=,tty=,comm='], {
       encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'],
     });
   } catch {
@@ -104,26 +135,36 @@ function resolveOwner(sessionId) {
 
   const parentOf = new Map();
   const ttyOf = new Map();
+  const commOf = new Map();
+
+  // `comm` is last because it is the only field that can contain spaces.
   for (const line of table.split('\n')) {
-    const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\S+)$/);
+    const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/);
     if (!match) continue;
     const pid = Number(match[1]);
     parentOf.set(pid, Number(match[2]));
     ttyOf.set(pid, match[3]);
+    commOf.set(pid, match[4]);
   }
 
   let pid = process.ppid;
-  for (let hop = 0; hop < 24 && pid > 1; hop += 1) {
-    const tty = ttyOf.get(pid);
-    if (tty && tty !== '??' && tty !== '?' && tty !== '-') {
-      const clean = tty.replace(/^\/dev\//, '');
-      try {
-        mkdirSync(PROCS, { recursive: true });
-        writeFileSync(cacheFile, `${pid} ${clean}`);
-      } catch { /* cache is an optimisation only */ }
-      return { pid, tty: clean };
+  let topmost = null;
+
+  for (let hop = 0; hop < 32 && pid > 1; hop += 1) {
+    const tty = normaliseTTY(ttyOf.get(pid));
+    if (tty) {
+      if (isNodeProcess(commOf.get(pid) || '')) {
+        rememberOwner(cacheFile, pid, tty);
+        return { pid, tty };
+      }
+      topmost = { pid, tty };
     }
     pid = parentOf.get(pid) || 0;
+  }
+
+  if (topmost) {
+    rememberOwner(cacheFile, topmost.pid, topmost.tty);
+    return topmost;
   }
   return {};
 }

@@ -31,7 +31,12 @@ tree, no quota meter, and no cloud service. Everything is local.
 
 ## Install
 
-Requires macOS 14 or later and Command Code (`cmdc`).
+Requirements:
+
+* macOS 14 (Sonoma) or later — the app targets `.macOS(.v14)` and uses
+  `MenuBarExtra`, `SMAppService` and two-parameter `onChange`
+* Xcode or the Command Line Tools, for `swift`
+* Command Code — the CLI (`cmdc`) and/or the Desktop app
 
 ```bash
 git clone https://github.com/JakubRasken/cmdc-island.git
@@ -40,7 +45,26 @@ cd cmdc-island
 open "dist/CMDC Island.app"
 ```
 
-The app is an accessory — no Dock icon. Quit it from the menu bar item.
+`make-app.sh` runs `swift build -c release`, assembles a `.app` with an
+`LSUIElement` Info.plist (accessory: no Dock icon) and ad-hoc signs it.
+
+Build it by hand if you prefer:
+
+```bash
+swift build -c release          # compile only
+swift run -c release            # run from the build directory
+```
+
+Running straight from `swift run` has one caveat: there is no bundle, so
+`Bundle.main.bundleIdentifier` is nil and the app cannot register itself as a
+login item or reap a previous instance. Everything else works.
+
+On first launch macOS will ask for permission the first time you click the
+island and it tries to select a terminal tab — that is an Apple Event, and the
+app declares `NSAppleEventsUsageDescription` for it. **Allow it**, or clicking
+will do nothing. Because the app is ad-hoc signed rather than notarised, the
+permission is tied to the binary's signature and may need re-granting after you
+rebuild.
 
 ### Enable live status (recommended)
 
@@ -60,7 +84,8 @@ Installing is conservative by design:
 * a one-time backup is written to `~/.commandcode/cmdc-island/settings.json.backup`,
 * if `settings.json` is not valid JSON the install aborts and tells you, rather
   than overwriting a hand-edited file,
-* installing twice is a no-op, and **Remove** deletes only its own entries.
+* installing twice is a no-op, and **Remove** deletes only entries pointing into
+  `~/.commandcode/cmdc-island`, so another tool's hook is never touched.
 
 ---
 
@@ -174,6 +199,75 @@ Clicking the island uses it to reach the exact tab or pane:
 For sessions started before hooks were installed, the tty is resolved on demand
 from the process table (`ps` + `lsof`) when you click.
 
+The iTerm2 and Terminal.app scripts report `ok` only when they actually selected
+a session. Checking `osascript`'s exit status would not be enough — it exits 0
+after a loop that matched nothing, which would swallow the click and stop the
+fallbacks from running.
+
+---
+
+## Surfaces and platforms
+
+Command Code has three ways to run, and the island treats them differently
+because they expose different things.
+
+| Surface | Session store | Live status | Clicking the island |
+| --- | --- | --- | --- |
+| **CLI in a terminal** (`cmdc`) | same | hooks — immediate | exact tab or pane |
+| **CLI headless** (`cmd -p`) | same | hooks — immediate | nothing (no terminal exists) |
+| **VS Code extension** | same | hooks — immediate | activates VS Code |
+| **Desktop app** | same | hooks if `node` is on PATH, else transcripts | activates the Desktop app |
+
+All four write the same transcripts to the same place, so *reading* sessions
+works identically — the differences are only in live status and focusing.
+
+**The VS Code extension** is a thin launcher: it creates an integrated terminal
+and runs `cmdc` in it. It is the CLI, so hooks and transcripts behave exactly as
+in Terminal.app. The integrated terminal is not scriptable by tty, so focusing
+brings VS Code forward instead of selecting the tab.
+
+**The Desktop app** is an Electron bundle that embeds the agent runtime (per its
+own docs, "you do not need to install the Command Code CLI"). Two consequences:
+
+* It has no controlling terminal, so there is no tty to focus. Clicking brings
+  the app forward, which is as specific as it can get — its chats are not
+  addressable from outside.
+* Its hook runner still reads `~/.commandcode/settings.json`, but the hook is
+  invoked as `node …`, and a Desktop-only install does not put `node` on your
+  PATH. If Node is missing the install button says so and the island falls back
+  to transcript-derived status.
+
+**Headless (`cmd -p`) sessions** are real sessions and are shown, but they run
+with no terminal attached, so they have nothing to focus. They are also
+untitled, so they read as their project name.
+
+### macOS vs Windows
+
+The island is macOS-only, but the Command Code state it reads is not
+platform-specific, and the schema was verified on Windows before this was
+written. What differs:
+
+| Concern | Windows | macOS | Effect here |
+| --- | --- | --- | --- |
+| Config root | `%USERPROFILE%\.commandcode` | `~/.commandcode` | none — `homeDirectoryForCurrentUser` |
+| Project slug | `d-ai-mac-cmdc-island` | `users-me-my-app` | none — we read `cwd` from the transcript header and never compute a slug |
+| `cwd` format | `D:\AI\app` | `/Users/me/app` | none — treated as an opaque string, tilde-abbreviated for display |
+| Hook shell | `cmd.exe` | `/bin/sh` | hook command is quoted for both |
+| Hook `ps` | n/a | BSD `ps -axo pid=,ppid=,tty=,comm=` | macOS-only path, stubbed and tested |
+| tty naming | n/a | `ttys003` | `/dev/` prefix stripped defensively either way |
+| `lsof` | n/a | `/usr/sbin/lsof` | used only for hook-less sessions, on click |
+
+The one genuinely macOS-specific piece of logic is the process-ancestry walk in
+the hook. It is the reason a session can be focused at all, and it is subtle:
+a process inherits its controlling terminal across `fork`/`exec`, so the short
+lived shell that runs the hook already reports the *right tty* — and a pid that
+is dead by the next poll. The walk therefore prefers the nearest ancestor
+running `node` (Command Code itself) and only falls back to the topmost ancestor
+with a tty (your login shell).
+
+Nothing in the app shells out to Command Code, scrapes a terminal, or sends
+anything over the network.
+
 ---
 
 ## Configuration
@@ -250,16 +344,35 @@ is excellent. This is the opposite: one agent, one glance.
 
 ## Status
 
-The Command Code integration — transcript schema, hook payloads, turn
-detection, spool format — was built against the real thing: the transcript
-schema was read off nine live sessions, the hook script was executed with
-genuine payloads for all four events, and the turn-detection state machine was
-replayed over those transcripts (zero malformed lines, every derived state
-matching what the transcript actually ends with).
+**Verified against the real thing.** The transcript schema was read off nine
+live sessions. The embedded hook is not reimplemented for testing — it is
+extracted from the Swift literal exactly as the installer writes it, then run:
 
-The Swift has not been compiled yet: it was written on a machine with no Swift
-toolchain. It has been reviewed for compile errors, but expect to run
-`swift build` once and fix whatever the compiler disagrees with.
+* **12 hook checks** across all four events — detail extraction and basename
+  handling, whitespace collapsing and 80-character clipping, `permission_mode`
+  passthrough, `Stop` carrying no tool fields, `SessionStart` carrying `source`
+* **5 malformed-input checks** — non-JSON, JSON that is not an object, a
+  missing session id, a missing event name, empty stdin. Each writes nothing,
+  produces no stdout, and exits 0, which Command Code reads as "no opinion".
+  A broken hook can never block the agent.
+* **4 process-walk checks** against a synthetic BSD `ps` table — that it picks
+  Command Code's `node` process rather than the transient shell that runs the
+  hook, falls back to the login shell, and degrades to no owner when there is
+  no tty or `ps` fails.
+* **The turn-detection state machine** was replayed over those nine transcripts:
+  zero malformed lines, and every derived state matched what the transcript
+  actually ends with.
+
+**Not yet verified.** Two things, stated plainly:
+
+* The Swift has never been through a compiler — it was written on a machine
+  with no Swift toolchain. It has been reviewed line by line for compile errors
+  and the two found were fixed, but expect to run `swift build` once and fix
+  whatever the compiler disagrees with.
+* The Desktop app's behaviour is inferred from its installer, its documentation
+  and the fact that it bundles the same `command-code` package — not from
+  running it. Transcript reading should work unchanged; live status depends on
+  whether `node` is on your PATH; clicking brings the app forward.
 
 ## Credits
 

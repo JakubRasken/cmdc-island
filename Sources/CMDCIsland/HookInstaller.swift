@@ -76,7 +76,12 @@ enum HookInstaller {
     @discardableResult
     static func install() -> State {
         guard let command = hookCommand else {
-            return .failed("Node.js was not found. Command Code needs it, so it is probably installed somewhere unusual.")
+            return .failed(
+                "Node.js was not found, so the hook cannot be installed. "
+                + "This only happens if you use the Command Code Desktop app without the CLI — "
+                + "the app embeds its own runtime and does not put `node` on your PATH. "
+                + "The island still works; it just derives status from transcripts instead."
+            )
         }
 
         let settingsResult = readSettings()
@@ -85,7 +90,7 @@ enum HookInstaller {
         case .success(let value):
             settings = value
         case .failure(let error):
-            return .failed(error)
+            return .failed(error.message)
         }
 
         // 1. Write the script.
@@ -144,7 +149,7 @@ enum HookInstaller {
     static func uninstall() -> State {
         let result = readSettings()
         guard case .success(var settings) = result else {
-            if case .failure(let error) = result { return .failed(error) }
+            if case .failure(let error) = result { return .failed(error.message) }
             return .notInstalled
         }
 
@@ -211,7 +216,17 @@ enum HookInstaller {
 
     // MARK: - settings.json I/O
 
-    private static func readSettings() -> Result<[String: Any], String> {
+    /// Why a settings read failed, in words meant for the user.
+    ///
+    /// A dedicated type rather than a bare `String`: `Result` constrains its
+    /// `Failure` to `Error`, and `String` does not conform to it. Extending
+    /// `String` to conform would work but is a retroactive conformance of an
+    /// imported type and would break under stricter language modes.
+    private struct SettingsError: Error {
+        var message: String
+    }
+
+    private static func readSettings() -> Result<[String: Any], SettingsError> {
         let url = CommandCodePaths.settingsURL
         guard FileManager.default.fileExists(atPath: url.path) else { return .success([:]) }
 
@@ -219,9 +234,9 @@ enum HookInstaller {
             return .success([:])
         }
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return .failure(
-                "\(url.path) is not valid JSON, so it was left untouched. Fix it, then try again."
-            )
+            return .failure(SettingsError(
+                message: "\(url.path) is not valid JSON, so it was left untouched. Fix it, then try again."
+            ))
         }
         return .success(object)
     }

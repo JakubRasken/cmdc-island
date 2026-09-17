@@ -12,6 +12,10 @@ struct NotchMetrics: Equatable {
     /// small gap on notched-less displays so it reads as a floating pill.
     var topInset: CGFloat { hasNotch ? 0 : 6 }
 
+    /// Main-actor isolated because it reads `NSScreen` geometry, which AppKit
+    /// annotates as main-actor. The only caller, `NotchPanel.buildContent()`,
+    /// is already on the main actor.
+    @MainActor
     static func detect(on screen: NSScreen) -> NotchMetrics {
         let defaults = UserDefaults.standard
         let dw = CGFloat(defaults.double(forKey: Pref.Key.notchWidthOffset))

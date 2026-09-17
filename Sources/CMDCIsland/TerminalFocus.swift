@@ -19,22 +19,52 @@ import Foundation
 enum TerminalFocus {
 
     /// Returns true when something was actually brought forward.
+    ///
+    /// The tty is the key that unlocks exact focusing, and it normally arrives
+    /// from the hook. Sessions started before hooks were installed fall back to
+    /// resolving it from the process table on demand.
     @discardableResult
     static func focus(session: CommandCodeSession) -> Bool {
-        var pid = session.pid
-
-        if pid == nil {
-            pid = ProcessScan.pids(withWorkingDirectory: session.projectDir).first
+        if let pid = session.pid ?? ProcessScan.pids(withWorkingDirectory: session.projectDir).first {
+            if let tty = session.tty ?? ProcessScan.resolveTTY(from: pid),
+               focusTerminal(tty: tty, pid: pid) {
+                return true
+            }
+            // Nothing scriptable matched; at minimum surface the right app.
+            if let app = ProcessScan.owningApplication(pid: pid), activate(app) {
+                return true
+            }
         }
 
-        guard let pid else { return false }
+        // No process to attach to. Two cases land here: a headless (`cmd -p`)
+        // run, or a session driven by the Desktop app, which embeds the agent
+        // runtime and has no controlling terminal at all. Bringing the app
+        // forward is the honest best effort — we cannot address a specific chat.
+        return activateDesktopApp()
+    }
 
-        if let tty = session.tty ?? ProcessScan.resolveTTY(from: pid) {
-            if focus(tty: tty, pid: pid) { return true }
-        }
+    /// Brings the Command Code Desktop app forward, if it is running.
+    ///
+    /// Matched on bundle identity rather than a hard-coded id: the app installs
+    /// to `/Applications/Command Code.app`, and the exact identifier is not
+    /// documented, so name and path are both accepted.
+    private static func activateDesktopApp() -> Bool {
+        let wanted: Set<String> = ["command code", "commandcode", "command-code"]
 
-        // Nothing scriptable matched; at minimum surface the right app.
-        if let app = ProcessScan.owningApplication(pid: pid) {
+        for app in NSWorkspace.shared.runningApplications {
+            let name = (app.localizedName ?? "").lowercased()
+            let bundle = (app.bundleURL?.lastPathComponent ?? "")
+                .replacingOccurrences(of: ".app", with: "")
+                .lowercased()
+            let identifier = (app.bundleIdentifier ?? "").lowercased()
+
+            // Our own bundle id is `ai.cmdc-island`, so this cannot self-match.
+            let looksLikeCommandCode = wanted.contains(name)
+                || wanted.contains(bundle)
+                || identifier.contains("commandcode")
+                || identifier.contains("command-code")
+
+            guard looksLikeCommandCode else { continue }
             return activate(app)
         }
         return false
@@ -42,7 +72,8 @@ enum TerminalFocus {
 
     // MARK: - Per-terminal
 
-    private static func focus(tty: String, pid: pid_t) -> Bool {
+    /// Try every terminal we know how to drive, in order of precision.
+    private static func focusTerminal(tty: String, pid: pid_t) -> Bool {
         let device = "/dev/\(tty)"
 
         if focusTmux(device: device) { return true }
@@ -85,9 +116,14 @@ enum TerminalFocus {
 
     // MARK: iTerm2
 
+    /// The AppleScript reports `ok` only when it actually selected a session.
+    ///
+    /// Checking the exit status is not enough: `osascript` exits 0 after a
+    /// loop that matched nothing, so a running iTerm would swallow the click
+    /// and the WezTerm/kitty/activate fallbacks would never run.
     private static func focusIterm(device: String) -> Bool {
         guard isRunning(bundleID: "com.googlecode.iterm2") else { return false }
-        return Subprocess.osascript("""
+        return osascriptResult("""
         tell application "iTerm"
             activate
             repeat with w in windows
@@ -97,20 +133,21 @@ enum TerminalFocus {
                             select w
                             select t
                             select s
-                            return
+                            return "ok"
                         end if
                     end repeat
                 end repeat
             end repeat
         end tell
-        """)
+        return "miss"
+        """) == "ok"
     }
 
     // MARK: Terminal.app
 
     private static func focusTerminalApp(device: String) -> Bool {
         guard isRunning(bundleID: "com.apple.Terminal") else { return false }
-        return Subprocess.osascript("""
+        return osascriptResult("""
         tell application "Terminal"
             activate
             repeat with w in windows
@@ -118,12 +155,13 @@ enum TerminalFocus {
                     if tty of t is "\(device)" then
                         set selected tab of w to t
                         set index of w to 1
-                        return
+                        return "ok"
                     end if
                 end repeat
             end repeat
         end tell
-        """)
+        return "miss"
+        """) == "ok"
     }
 
     // MARK: WezTerm
@@ -196,6 +234,15 @@ enum TerminalFocus {
 
     private static func isRunning(bundleID: String) -> Bool {
         !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
+    }
+
+    /// Run AppleScript and return its trimmed result, so a script can report
+    /// whether it actually matched rather than only that it did not error.
+    private static func osascriptResult(_ source: String) -> String {
+        guard let output = Subprocess.capture("/usr/bin/osascript", ["-e", source]) else {
+            return ""
+        }
+        return output.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     @discardableResult

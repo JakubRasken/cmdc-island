@@ -54,11 +54,6 @@ enum Subprocess {
         }
     }
 
-    @discardableResult
-    static func osascript(_ source: String) -> Bool {
-        run("/usr/bin/osascript", ["-e", source])
-    }
-
     /// First match of `name` on the user's PATH, via `/usr/bin/env which`.
     static func which(_ name: String) -> String? {
         guard let output = capture("/usr/bin/env", ["which", name]) else { return nil }

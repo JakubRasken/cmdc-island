@@ -59,6 +59,13 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <!-- Menu bar app: no Dock icon, no app switcher entry. -->
     <key>LSUIElement</key>
     <true/>
+    <!--
+      Clicking the island asks Terminal or iTerm2 to select a tab, which is an
+      Apple Event. Since macOS 10.14 that requires a usage description or the
+      request is refused and the click does nothing.
+    -->
+    <key>NSAppleEventsUsageDescription</key>
+    <string>CMDC Island asks your terminal to bring the tab running this Command Code session to the front.</string>
 </dict>
 </plist>
 PLIST
