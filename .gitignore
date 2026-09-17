@@ -13,3 +13,6 @@ inspiration/
 
 # Local Command Code state.
 .commandcode/
+
+# Dev harnesses.
+.scratch/

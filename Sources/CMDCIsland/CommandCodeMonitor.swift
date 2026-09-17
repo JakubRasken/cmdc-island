@@ -58,12 +58,12 @@ final class CommandCodeMonitor: ObservableObject {
 
     func start() {
         queue.async { [weak self] in
-            self?.rescan(force: true)
+            self?.rescan()
         }
 
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + .seconds(2), repeating: .milliseconds(1200))
-        timer.setEventHandler { [weak self] in self?.rescan(force: false) }
+        timer.setEventHandler { [weak self] in self?.rescan() }
         timer.resume()
         self.timer = timer
     }
@@ -82,7 +82,7 @@ final class CommandCodeMonitor: ObservableObject {
             self.spoolOffset = 0
             self.spoolPrimed = false
             self.hookStateCache = (false, .distantPast)
-            self.rescan(force: true)
+            self.rescan()
         }
     }
 
@@ -98,7 +98,7 @@ final class CommandCodeMonitor: ObservableObject {
 
     // MARK: - Scan
 
-    private func rescan(force: Bool) {
+    private func rescan() {
         let now = Date()
         let activeWindow = TimeInterval(Pref.activeWindowMinutes * 60)
 
@@ -139,8 +139,6 @@ final class CommandCodeMonitor: ObservableObject {
                 self.scheduleSpotlightClear(id: spot.sessionID, at: spot.at)
             }
         }
-
-        _ = force
     }
 
     // MARK: - Spool
@@ -171,27 +169,24 @@ final class CommandCodeMonitor: ObservableObject {
         guard let handle = FileHandle(forReadingAtPath: url.path) else { return }
         defer { try? handle.close() }
 
-        // On the very first read, skip whatever was already there: those events
-        // predate this launch and would replay stale statuses.
-        var skipFirst = !spoolPrimed
+        // On the first read of the session, replay only the tail of the spool.
+        // Replaying is deliberate: the most recent event for a live session is
+        // usually a `PreToolUse`, which is exactly the status we want on
+        // launch. Stale ones age out through the normal recency rules.
         let coldStart = !spoolPrimed
         spoolPrimed = true
 
-        let start: UInt64
-        if coldStart, size > 128 * 1024 {
-            start = size - 128 * 1024
-            skipFirst = true
-        } else {
-            start = spoolOffset
-        }
+        let start: UInt64 = (coldStart && size > 128 * 1024) ? size - 128 * 1024 : spoolOffset
+        // A read that begins mid-file begins mid-line; that fragment is not a
+        // record and must not be parsed as one.
+        var skipFirst = start > 0
 
         let consumed = TailRead.consumeLines(handle: handle, fromOffset: start) { [weak self] line in
-            guard let self else { return }
             if skipFirst {
                 skipFirst = false
-                if coldStart { return }
+                return
             }
-            guard let event = CommandCodeHookEvent.parse(line: line) else { return }
+            guard let self, let event = CommandCodeHookEvent.parse(line: line) else { return }
             self.apply(event: event, now: now)
         }
 
@@ -219,11 +214,12 @@ final class CommandCodeMonitor: ObservableObject {
             record.endedAt = nil
 
         case .preToolUse:
-            let activity = ToolActivity.describe(tool: event.toolName ?? "", input: nil)
-                ?? event.detail
+            // The hook already extracted the one argument worth naming, so the
+            // Swift side only has to phrase it.
+            let activity = ToolActivity.phrase(tool: event.toolName ?? "", detail: event.detail)
                 ?? event.toolDisplayName
             record.lastTool = event.toolName
-            record.apply(status: .working, at: event.at, activity: event.detail ?? activity)
+            record.apply(status: .working, at: event.at, activity: activity)
 
         case .postToolUse:
             // A tool returning does not end the turn — the model still has to
@@ -311,7 +307,6 @@ final class CommandCodeMonitor: ObservableObject {
 
         // Only pay for a re-read when the file actually moved.
         guard record.fileSize != size || record.state.isFirstConsume else {
-            record.lastSeenAt = now
             records[record.id] = record
             return
         }
@@ -319,7 +314,6 @@ final class CommandCodeMonitor: ObservableObject {
         CommandCodeSessionReader.consume(path: path, size: size, state: &record.state)
         record.fileSize = size
         record.modifiedAt = modified
-        record.lastSeenAt = now
 
         if let id = record.state.id, id != record.id, records[id] == nil {
             // The header named the session — re-key under its real id so hook
@@ -429,14 +423,12 @@ private struct SessionRecord {
     var startedAt: Date?
     var endedAt: Date?
     var lastEvidenceAt: Date
-    var lastSeenAt: Date
 
     init(id: String, transcriptPath: String, projectDir: String, now: Date) {
         self.id = id
         self.transcriptPath = transcriptPath
         self.projectDir = projectDir
         self.lastEvidenceAt = now
-        self.lastSeenAt = now
     }
 
     /// Adopt a status only if the evidence behind it is newer than what we

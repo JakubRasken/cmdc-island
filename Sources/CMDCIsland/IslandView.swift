@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Reports the island's own footprint up to the panel, so the window can be

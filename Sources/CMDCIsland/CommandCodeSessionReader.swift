@@ -277,47 +277,45 @@ enum CommandCodeSessionReader {
 /// Turns a canonical tool id plus its arguments into one short phrase.
 ///
 /// The island shows at most one line of "what is happening", so this is the
-/// single place that decides how a tool call reads in English.
+/// single place that decides how a tool call reads in English. Both input
+/// paths funnel through it: the transcript reader passes the full `tool_use`
+/// input, and the hook passes the single raw value it already extracted.
 enum ToolActivity {
 
+    /// From a transcript `tool_use` block.
     static func describe(tool: String, input: [String: Any]?) -> String? {
+        phrase(tool: tool, detail: value(tool: tool, input: input))
+    }
+
+    /// From a hook event, where `detail` is already the raw argument.
+    static func phrase(tool: String, detail: String?) -> String? {
         switch tool {
         case "shell_command":
-            guard let command = string(input, "command") else { return "Running a command" }
-            return "Running " + shorten(command, max: 64)
+            return detail.map { "Running " + shorten($0, max: 64) } ?? "Running a command"
 
         case "read_file":
-            guard let path = filePath(input) else { return "Reading a file" }
-            return "Reading " + base(path)
+            return detail.map { "Reading " + base($0) } ?? "Reading a file"
 
         case "write_file":
-            guard let path = filePath(input) else { return "Writing a file" }
-            return "Writing " + base(path)
+            return detail.map { "Writing " + base($0) } ?? "Writing a file"
 
         case "edit_file":
-            guard let path = filePath(input) else { return "Editing a file" }
-            return "Editing " + base(path)
+            return detail.map { "Editing " + base($0) } ?? "Editing a file"
 
         case "read_directory":
-            guard let path = string(input, "path") else { return "Listing a directory" }
-            return "Listing " + base(path)
+            return detail.map { "Listing " + base($0) } ?? "Listing a directory"
 
         case "glob":
-            guard let pattern = string(input, "pattern") else { return "Finding files" }
-            return "Finding " + shorten(pattern, max: 48)
+            return detail.map { "Finding " + shorten($0, max: 48) } ?? "Finding files"
 
         case "grep":
-            guard let pattern = string(input, "pattern") else { return "Searching the code" }
-            return "Searching " + shorten(pattern, max: 48)
+            return detail.map { "Searching " + shorten($0, max: 48) } ?? "Searching the code"
 
         case "todo_write":
             return "Updating the plan"
 
         case "task":
-            if let description = string(input, "description") {
-                return "Delegating " + shorten(description, max: 48)
-            }
-            return "Delegating"
+            return detail.map { "Delegating " + shorten($0, max: 48) } ?? "Delegating"
 
         case "web_fetch", "web_search":
             return "Searching the web"
@@ -332,7 +330,25 @@ enum ToolActivity {
         }
     }
 
-    // MARK: - Helpers
+    // MARK: - Argument extraction
+
+    /// The one argument worth naming, per tool.
+    private static func value(tool: String, input: [String: Any]?) -> String? {
+        switch tool {
+        case "shell_command":
+            return string(input, "command")
+        case "read_file", "write_file", "edit_file":
+            return filePath(input)
+        case "read_directory":
+            return string(input, "path")
+        case "glob", "grep":
+            return string(input, "pattern")
+        case "task":
+            return string(input, "description")
+        default:
+            return nil
+        }
+    }
 
     private static func string(_ input: [String: Any]?, _ key: String) -> String? {
         guard let value = input?[key] as? String, !value.isEmpty else { return nil }
@@ -347,6 +363,8 @@ enum ToolActivity {
         }
         return nil
     }
+
+    // MARK: - Formatting
 
     private static func base(_ path: String) -> String {
         let name = (path as NSString).lastPathComponent

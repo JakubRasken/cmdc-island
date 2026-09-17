@@ -19,7 +19,6 @@ enum Pref {
         static let expandOnFinished = "expandOnFinished"
         static let expandOnHover = "expandOnHover"
         static let showModel = "showModel"
-        static let showPrompt = "showPrompt"
         static let singleSessionOnly = "singleSessionOnly"
 
         static let notchWidthOffset = "notchWidthOffset"
@@ -39,7 +38,6 @@ enum Pref {
             Key.expandOnFinished: true,
             Key.expandOnHover: true,
             Key.showModel: true,
-            Key.showPrompt: true,
             Key.singleSessionOnly: false,
 
             Key.notchWidthOffset: 0.0,
@@ -90,10 +88,6 @@ enum Pref {
 
     static var showModel: Bool {
         UserDefaults.standard.bool(forKey: Key.showModel)
-    }
-
-    static var showPrompt: Bool {
-        UserDefaults.standard.bool(forKey: Key.showPrompt)
     }
 
     /// Collapse multi-session lists down to the loudest session.

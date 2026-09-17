@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 /// Visual constants. One dark surface, four status colours, two type sizes.
@@ -34,14 +35,11 @@ enum Theme {
         /// Collapsed pill height. Sits just under the notch's own height so it
         /// reads as an extension of the cutout rather than a slab on top of it.
         static let collapsedHeight: CGFloat = 26
-        static let collapsedMinWidth: CGFloat = 92
 
         static let expandedWidth: CGFloat = 340
-        static let expandedMaxHeight: CGFloat = 420
 
         static let dotSize: CGFloat = 7
         static let horizontalPadding: CGFloat = 12
-        static let verticalPadding: CGFloat = 10
 
         static let cardSpacing: CGFloat = 8
     }
