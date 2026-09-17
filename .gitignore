@@ -1,0 +1,15 @@
+.DS_Store
+.build/
+.swiftpm/
+*.xcodeproj
+*.xcworkspace
+dist/
+DerivedData/
+*.dmg
+*.zip
+
+# Local reference material, not part of the product.
+inspiration/
+
+# Local Command Code state.
+.commandcode/
