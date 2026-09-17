@@ -31,14 +31,19 @@ enum HookScript {
 // This process must never block the agent: it writes nothing to stdout and
 // always exits 0, which Command Code reads as "no opinion, allow".
 
-import { appendFileSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { appendFileSync, readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
 const ISLAND = join(homedir(), '.commandcode', 'cmdc-island');
 const SPOOL = join(ISLAND, 'events.jsonl');
 const PROCS = join(ISLAND, 'proc');
+// Written by the app when "start with sessions" is on, removed when it is off.
+// A flag file rather than a settings read, so the hook stays a single stat.
+const AUTOSTART = join(ISLAND, 'autostart');
+// Must match CFBundleIdentifier in make-app.sh.
+const BUNDLE_ID = 'ai.cmdc-island';
 
 function readStdin() {
   try {
@@ -169,6 +174,24 @@ function resolveOwner(sessionId) {
   return {};
 }
 
+// Bring the island up when a session begins. `open -g` launches it if it is
+// not running and is a silent no-op if it is, so this is safe to call every
+// time. SessionStart fires once per session, never per tool call, so the hot
+// path stays a single append.
+//
+// Detached and unref'd: the hook exits immediately and launchd re-parents
+// `open`, so starting the app costs this process no wall-clock time at all.
+function ensureIslandRunning() {
+  try {
+    if (!existsSync(AUTOSTART)) return;
+    const child = spawn('/usr/bin/open', ['-g', '-b', BUNDLE_ID], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+  } catch { /* not installed, or launch refused — never the agent's problem */ }
+}
+
 function main() {
   const text = readStdin();
   if (!text) return;
@@ -208,6 +231,9 @@ function main() {
     mkdirSync(ISLAND, { recursive: true });
     appendFileSync(SPOOL, JSON.stringify(record) + '\n');
   } catch { /* a missed event must never surface to the agent */ }
+
+  // After the append, so the event is on disk even if launching misbehaves.
+  if (event === 'SessionStart') ensureIslandRunning();
 }
 
 try {

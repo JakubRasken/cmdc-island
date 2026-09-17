@@ -87,6 +87,35 @@ Installing is conservative by design:
 * installing twice is a no-op, and **Remove** deletes only entries pointing into
   `~/.commandcode/cmdc-island`, so another tool's hook is never touched.
 
+### Starting automatically, and new projects
+
+Two separate questions, with two separate answers.
+
+**Does a session in a new folder show up?** Yes, with nothing to configure. The
+monitor scans the whole `~/.commandcode/projects` tree every tick and reads the
+project directory out of each transcript's header, so a folder it has never
+seen is treated no differently from one it has. There is no per-project
+registration and no slug matching — verified by a harness that creates a new
+project folder between two ticks and confirms it is discovered on the next one.
+
+**Does the app start on its own?** Two ways, and they are independent:
+
+* **Launch at login** (Settings → Display). The ordinary answer: the island is
+  simply always running, and every project is covered because discovery is
+  folder-agnostic.
+* **Start the island when a session starts** (Settings → Command Code hooks,
+  on by default). On `SessionStart` — once per session, never per tool call —
+  the hook runs `open -g -b ai.cmdc-island`. If the app is already running that
+  is a silent no-op; if it is not, this is what brings it up. The launch is
+  detached and unref'd, so it costs the hook no wall-clock time.
+
+The second needs hooks installed, because the hook is what launches the app. It
+is gated by a flag file (`~/.commandcode/cmdc-island/autostart`) rather than a
+settings read, so the hot path pays one `stat`, and the app rewrites the flag on
+launch and whenever the toggle moves so the two cannot drift.
+
+Both off and the app simply does nothing until you open it.
+
 ---
 
 ## How it works
@@ -170,15 +199,50 @@ Command Code died mid-turn.
 
 ### Performance
 
-* Transcripts are tailed **incrementally** from a remembered byte offset. Only
-  complete lines are parsed, so a half-flushed JSON object is never read.
-* A cold start reads only the **last 256 KB** of a transcript, never the whole
-  file. A 100 MB session costs the same as a 100 KB one.
-* Files are only re-read when `size` actually moves.
-* `meta.json` (the title) is re-read only when its own mtime moves.
-* The event spool is consumed by offset and rotated past 4 MB.
-* Polling is a 1.2 s tick doing `stat` calls; all parsing happens on a private
-  queue, and the UI is republished only when the snapshot actually differs.
+This is meant to be something you forget is running, so the budget is explicit.
+
+**What one tick does.** Enumerate the projects tree, `stat` each transcript, skip
+anything whose mtime is outside the retention window, and read only files whose
+size moved. Measured against a real session store with nine transcripts across
+eight projects:
+
+| | |
+| --- | --- |
+| Steady-state tick | **0.88 ms** — 9 `stat` calls, **0 bytes read** |
+| Cold-start tick | 1.03 ms — 256 KB read, one session |
+| One JSONL line parsed | 2.2 µs |
+| Largest transcript on disk | **41.5 MB — of which 256 KB is ever read** |
+
+The 41 MB figure is the whole point: a ten-turn conversation at the end of an
+enormous transcript costs exactly the same as a small one, because the reader
+seeks to `size - 256 KB` and never looks further back.
+
+**CPU is not the cost — wakeups are.** A tick is sub-millisecond, but a timer
+that fires constantly keeps a laptop out of deep idle. So the interval adapts:
+
+| State | Interval | Wakeups/min |
+| --- | --- | --- |
+| Any session working | 1.0 s | 60 |
+| Everything else | 3.0 s | 20 |
+
+Ticks also carry scheduling leeway, which lets the kernel coalesce this wakeup
+with ones already pending — the difference between a timer that costs battery
+and one that does not. At 3 s a tick is **0.03% of one core**, and that is the
+floor, not a typical figure; most ticks find nothing and read nothing.
+
+**Memory** is flat and small: a few hundred bytes of parse state per session
+(a byte offset, a prompt, an activity string), a bounded list of sessions inside
+the retention window, and no transcript ever held in memory. The 256 KB cold
+read is a transient buffer that is released immediately. Nothing grows with how
+long a session has been running.
+
+**The UI only redraws on change.** The monitor compares the freshly built
+snapshot against what is published and assigns only when it differs, so a tick
+that finds nothing new touches no SwiftUI state at all.
+
+Measured with a harness that mirrors the polling algorithm exactly, driving the
+real session store. The numbers come from the algorithm rather than from the
+running Swift app — they are the work the app does, not a guess at it.
 
 ---
 
@@ -359,6 +423,13 @@ extracted from the Swift literal exactly as the installer writes it, then run:
   Command Code's `node` process rather than the transient shell that runs the
   hook, falls back to the login shell, and degrades to no owner when there is
   no tty or `ps` fails.
+* **4 autostart-gate checks** — the launch is attempted on `SessionStart` and
+  only then, and only when the flag file exists; neither branch stops the event
+  being recorded.
+* **6 discovery checks** — a project folder created between two ticks is picked
+  up with no registration, a stale one is skipped, an unchanged tree reads zero
+  bytes, an append reads only the appended bytes, and a half-written trailing
+  line is never parsed as a record.
 * **The turn-detection state machine** was replayed over those nine transcripts:
   zero malformed lines, and every derived state matched what the transcript
   actually ends with.

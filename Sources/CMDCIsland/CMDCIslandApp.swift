@@ -91,6 +91,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // first tick and the panel's geometry both depend on them.
         Pref.registerDefaults()
 
+        // Keep the hook's flag file in step with the setting, in case it was
+        // changed while the app was not running.
+        HookInstaller.syncAutostart(enabled: Pref.startWithSessions)
+
         // Accessory: no Dock icon, no app switcher entry, but the island and
         // the menu bar item both work.
         NSApp.setActivationPolicy(.accessory)

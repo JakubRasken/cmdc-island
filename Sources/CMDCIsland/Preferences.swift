@@ -20,6 +20,7 @@ enum Pref {
         static let expandOnHover = "expandOnHover"
         static let showModel = "showModel"
         static let singleSessionOnly = "singleSessionOnly"
+        static let startWithSessions = "startWithSessions"
 
         static let notchWidthOffset = "notchWidthOffset"
         static let notchHeightOffset = "notchHeightOffset"
@@ -39,6 +40,7 @@ enum Pref {
             Key.expandOnHover: true,
             Key.showModel: true,
             Key.singleSessionOnly: false,
+            Key.startWithSessions: true,
 
             Key.notchWidthOffset: 0.0,
             Key.notchHeightOffset: 0.0,
@@ -93,6 +95,16 @@ enum Pref {
     /// Collapse multi-session lists down to the loudest session.
     static var singleSessionOnly: Bool {
         UserDefaults.standard.bool(forKey: Key.singleSessionOnly)
+    }
+
+    /// Have the hook bring the island up when a Command Code session starts.
+    ///
+    /// Session discovery itself is already folder-agnostic — the monitor scans
+    /// the whole `~/.commandcode/projects` tree, so a session in a project it
+    /// has never seen appears on its own. This only controls whether the *app*
+    /// is running to notice.
+    static var startWithSessions: Bool {
+        UserDefaults.standard.bool(forKey: Key.startWithSessions)
     }
 
     // MARK: Panel

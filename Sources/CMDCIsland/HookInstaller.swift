@@ -30,6 +30,31 @@ enum HookInstaller {
         CommandCodePaths.islandURL.appendingPathComponent(HookScript.fileName)
     }
 
+    /// Flag file the hook stats before bringing the app up.
+    ///
+    /// A file rather than a preference read: the hook runs on Command Code's
+    /// timeout budget and should not be parsing anything to answer one yes/no
+    /// question. The app writes it on launch and whenever the setting changes,
+    /// so the two can never drift.
+    static var autostartURL: URL {
+        CommandCodePaths.islandURL.appendingPathComponent("autostart")
+    }
+
+    /// Make the flag file match the setting.
+    static func syncAutostart(enabled: Bool) {
+        CommandCodePaths.ensureIslandDirectory()
+        if enabled {
+            guard !FileManager.default.fileExists(atPath: autostartURL.path) else { return }
+            FileManager.default.createFile(atPath: autostartURL.path, contents: Data())
+        } else {
+            try? FileManager.default.removeItem(at: autostartURL)
+        }
+    }
+
+    static var autostartEnabled: Bool {
+        FileManager.default.fileExists(atPath: autostartURL.path)
+    }
+
     /// The exact command string registered in `settings.json`.
     static var hookCommand: String? {
         guard let node = nodePath else { return nil }
@@ -140,6 +165,7 @@ enum HookInstaller {
             return .failed("Could not update settings.json: \(error.localizedDescription)")
         }
 
+        syncAutostart(enabled: Pref.startWithSessions)
         return currentState()
     }
 
@@ -204,6 +230,8 @@ enum HookInstaller {
         if FileManager.default.fileExists(atPath: scriptURL.path) {
             try FileManager.default.removeItem(at: scriptURL)
         }
+        // Without the hook nothing would read the flag, so it goes too.
+        try? FileManager.default.removeItem(at: autostartURL)
     }
 
     // MARK: - Spool

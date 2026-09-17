@@ -13,6 +13,7 @@ struct SettingsView: View {
     @AppStorage(Pref.Key.expandOnHover) private var expandOnHover = true
     @AppStorage(Pref.Key.expandOnFinished) private var expandOnFinished = true
     @AppStorage(Pref.Key.singleSessionOnly) private var singleSessionOnly = false
+    @AppStorage(Pref.Key.startWithSessions) private var startWithSessions = true
 
     @AppStorage(Pref.Key.activeWindowMinutes) private var activeWindowMinutes = 20.0
     @AppStorage(Pref.Key.completedFlashSeconds) private var completedFlashSeconds = 8.0
@@ -76,10 +77,16 @@ struct SettingsView: View {
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            Toggle("Start the island when a session starts", isOn: $startWithSessions)
+                .disabled(hookState != .installed)
+                .onChange(of: startWithSessions) { _, value in
+                    HookInstaller.syncAutostart(enabled: value)
+                }
         } header: {
             Text("Command Code hooks")
         } footer: {
-            Text("The hook is a small Node script written to ~/.commandcode/cmdc-island/hook.mjs and registered in ~/.commandcode/settings.json. It reports tool activity, turn ends and terminal identity. Nothing leaves your machine.")
+            Text("The hook is a small Node script written to ~/.commandcode/cmdc-island/hook.mjs and registered in ~/.commandcode/settings.json. It reports tool activity, turn ends and terminal identity. Nothing leaves your machine.\n\nSessions in new projects are picked up automatically either way — the island watches the whole ~/.commandcode/projects tree. The toggle only controls whether the app is running to notice, and needs hooks because the hook is what launches it.")
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
         }

@@ -52,6 +52,20 @@ final class CommandCodeMonitor: ObservableObject {
     private var spotlightClearWork: DispatchWorkItem?
     private var hookStateCache: (installed: Bool, at: Date) = (false, .distantPast)
 
+    /// Set by each scan; drives the polling interval.
+    private var anyWorking = false
+    private var currentInterval: TimeInterval = 1.0
+
+    /// How often to look.
+    ///
+    /// The stat calls are ~1 ms, so CPU is not the cost — *wakeups* are. A
+    /// timer that fires every 1.2 s keeps a laptop out of deep idle for 50
+    /// wakeups a minute, and most of those find nothing. Fast only while
+    /// something is genuinely running; 3 s otherwise, which is imperceptible
+    /// for a thing you glance at.
+    private static let activeInterval: TimeInterval = 1.0
+    private static let idleInterval: TimeInterval = 3.0
+
     private init() {}
 
     // MARK: - Lifecycle
@@ -62,10 +76,40 @@ final class CommandCodeMonitor: ObservableObject {
         }
 
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now() + .seconds(2), repeating: .milliseconds(1200))
-        timer.setEventHandler { [weak self] in self?.rescan() }
+        // Reads `self.timer` rather than capturing the local, so the source
+        // does not retain its own handler.
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.rescan()
+            self.retime()
+        }
+        timer.schedule(
+            deadline: .now() + .seconds(2),
+            repeating: .milliseconds(Int(Self.activeInterval * 1000)),
+            leeway: .milliseconds(Int(Self.activeInterval * 400))
+        )
         timer.resume()
         self.timer = timer
+    }
+
+    /// Reschedule only when the desired interval actually changed, so a steady
+    /// state never re-arms.
+    ///
+    /// The leeway is deliberate: it lets the kernel coalesce this wakeup with
+    /// others already scheduled, which is the difference between a timer that
+    /// costs battery and one that does not.
+    private func retime() {
+        guard let timer else { return }
+
+        let wanted = anyWorking ? Self.activeInterval : Self.idleInterval
+        guard wanted != currentInterval else { return }
+        currentInterval = wanted
+
+        timer.schedule(
+            deadline: .now() + wanted,
+            repeating: .milliseconds(Int(wanted * 1000)),
+            leeway: .milliseconds(Int(wanted * 400))
+        )
     }
 
     func stop() {
@@ -126,6 +170,8 @@ final class CommandCodeMonitor: ObservableObject {
         let installed = cachedHookState(now: now)
         let newSummary = Self.summarize(built)
         let spot = detectSpotlight(in: built, now: now)
+
+        anyWorking = built.contains { $0.status == .working }
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
