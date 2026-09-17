@@ -248,6 +248,19 @@ is excellent. This is the opposite: one agent, one glance.
 
 ---
 
+## Status
+
+The Command Code integration — transcript schema, hook payloads, turn
+detection, spool format — was built against the real thing: the transcript
+schema was read off nine live sessions, the hook script was executed with
+genuine payloads for all four events, and the turn-detection state machine was
+replayed over those transcripts (zero malformed lines, every derived state
+matching what the transcript actually ends with).
+
+The Swift has not been compiled yet: it was written on a machine with no Swift
+toolchain. It has been reviewed for compile errors, but expect to run
+`swift build` once and fix whatever the compiler disagrees with.
+
 ## Credits
 
 The macOS Dynamic Island infrastructure — the panel geometry, the notch

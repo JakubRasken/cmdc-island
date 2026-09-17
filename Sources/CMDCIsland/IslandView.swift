@@ -373,12 +373,17 @@ private struct SessionRow: View {
             }
 
             HStack(spacing: 5) {
-                Text(session.subtitle)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                // `subtitle` already falls back to the path, which is printed
+                // next — so ask for the specific pieces instead of reusing it,
+                // or a quiet session reads as "~/app · ~/app".
+                if let detail = session.activity ?? session.lastPrompt {
+                    Text(detail)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
 
-                Text("·")
-                    .foregroundStyle(Theme.tertiaryText)
+                    Text("·")
+                        .foregroundStyle(Theme.tertiaryText)
+                }
 
                 Text(session.displayPath)
                     .lineLimit(1)
